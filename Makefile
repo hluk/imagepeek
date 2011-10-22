@@ -1,4 +1,4 @@
-CFLAGS = -Wall -pedantic -O0 -g
+CFLAGS = -Wall -O0 -g
 
 PKG_CONFIG = pkg-config
 PKGS = clutter-1.0
