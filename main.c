@@ -44,7 +44,6 @@ struct _Application {
     ClutterActor *stage;
     ClutterLayoutManager *layout;
     ClutterActor *viewport;
-    ClutterActor *view;
     Options options;
 
     guint argc;
@@ -156,8 +155,8 @@ scrollable_on_key_press(ClutterActor *actor,
         ClutterEvent *event,
         guint *scroll_animation)
 {
-    gfloat x, y;
-    ClutterActor *viewport;
+    gfloat x, y, x1, y1, x2, y2;
+    ClutterActor *viewport = NULL;
     guint keyval;
     ClutterModifierType state;
 
@@ -167,7 +166,9 @@ scrollable_on_key_press(ClutterActor *actor,
 
     keyval = clutter_event_get_key_symbol(event);
 
-    scrollable_get_scroll(actor, &x, &y);
+    scrollable_get_scroll(actor, &x1, &y1);
+    x = x1;
+    y = y1;
     switch (keyval)
     {
         case CLUTTER_KEY_Up:
@@ -200,7 +201,15 @@ scrollable_on_key_press(ClutterActor *actor,
         default:
             return FALSE;
     }
-    scrollable_set_scroll(actor, x, y, *scroll_animation);
+
+    scrollable_set_scroll(actor, x, y, 0);
+    scrollable_get_scroll(actor, &x2, &y2);
+    if ( (gint)x1 != (gint)x2 || (gint)y1 != (gint)y2 ) {
+        scrollable_set_scroll(actor, x, y, 0);
+        scrollable_set_scroll(actor, x, y, *scroll_animation);
+    } else {
+        return FALSE;
+    }
 
     return TRUE;
 }
@@ -328,83 +337,90 @@ sharpen(ClutterActor *actor, gfloat sharpen_strength)
 }
 
 static void
-update(Application *app)
+update(Application *app, gboolean update_filters)
 {
     gfloat x, y;
 
     scrollable_get_scroll(app->viewport, &x, &y);
     scrollable_set_scroll(app->viewport, x, y, 0);
-    sharpen(app->viewport, app->options.sharpen_strength);
+
+    if (update_filters)
+        sharpen(app->viewport, app->options.sharpen_strength);
 }
 
 static void
 on_zoom_completed(ClutterAnimation *anim, Application *app)
 {
-    update(app);
+    update(app, TRUE);
 }
+
+static void
+set_zoom_simple(Application *app, gdouble zoom_level)
+{
+    set_zoom(app->viewport, zoom_level, app->options.zoom_animation,
+            G_CALLBACK(on_zoom_completed), app);
+}
+
 
 static gboolean
 load_image(Application *app, const char *filename, gint x, gint y)
 {
-    ClutterActor *view, *text, *text_shadow;
+    ClutterActor *item, *view, *label, *text, *text_shadow;
     ClutterTableLayout *layout;
     gfloat xx, yy, w;
 
-    /* label shadow */
-    text_shadow = clutter_text_new_full(app->options.text_font, filename, &app->options.text_shadow);
-    clutter_text_set_ellipsize( CLUTTER_TEXT(text_shadow), PANGO_ELLIPSIZE_MIDDLE );
-    clutter_actor_set_anchor_point(text_shadow, -2.0, -2.0);
-
-    /* label */
-    text = clutter_text_new_full(app->options.text_font, filename, &app->options.text_color);
-    clutter_text_set_ellipsize( CLUTTER_TEXT(text), PANGO_ELLIPSIZE_MIDDLE );
-    clutter_text_set_selectable( CLUTTER_TEXT(text) , TRUE );
+    item = clutter_group_new();
 
     /* image */
     view = clutter_texture_new_from_file(filename, NULL);
     if (view) {
-        g_printerr("imagepeek: Added \"%s\".\n", filename);
-        w = clutter_actor_get_width(view);
-        clutter_actor_set_width(text_shadow, w);
-        clutter_actor_set_width(text, w);
+        clutter_container_add_actor( CLUTTER_CONTAINER(item), view );
     } else {
         g_printerr("imagepeek: Cannot open \"%s\"!\n", filename);
-        clutter_text_set_color( CLUTTER_TEXT(text), &app->options.error_color );
     }
 
-    /* update layout */
+    if (app->options.rows > 1 || app->options.columns > 1 || !view) {
+        /* text shadow */
+        text_shadow = clutter_text_new_full(app->options.text_font, filename, &app->options.text_shadow);
+        clutter_text_set_ellipsize( CLUTTER_TEXT(text_shadow), PANGO_ELLIPSIZE_MIDDLE );
+        clutter_actor_set_anchor_point(text_shadow, -2.0, -2.0);
+        clutter_actor_add_effect( text_shadow, clutter_blur_effect_new() );
+
+        /* text */
+        text = clutter_text_new_full(app->options.text_font, filename, &app->options.text_color);
+        clutter_text_set_ellipsize( CLUTTER_TEXT(text), PANGO_ELLIPSIZE_MIDDLE );
+        clutter_text_set_selectable( CLUTTER_TEXT(text) , TRUE );
+
+        /* label */
+        label = clutter_group_new();
+        clutter_container_add_actor( CLUTTER_CONTAINER(label), text_shadow );
+        clutter_container_add_actor( CLUTTER_CONTAINER(label), text );
+
+        if (view) {
+            w = clutter_actor_get_width(view);
+            clutter_actor_set_width(text_shadow, w);
+            clutter_actor_set_width(text, w);
+        } else {
+            clutter_text_set_color( CLUTTER_TEXT(text), &app->options.error_color );
+        }
+        clutter_container_add_actor( CLUTTER_CONTAINER(item), label );
+    }
+
+    /* begin updating layout */
     clutter_threads_enter();
 
     layout = CLUTTER_TABLE_LAYOUT(app->layout);
 
+    /* save scroll */
     scrollable_get_scroll(app->viewport, &xx, &yy);
     w = clutter_actor_get_width(app->viewport);
 
-    clutter_table_layout_pack(layout, view, x, y);
+    /* add item and label */
+    clutter_table_layout_pack(layout, item, x, y);
     clutter_table_layout_set_fill( layout, view, FALSE, FALSE );
     clutter_table_layout_set_expand( layout, view, FALSE, FALSE );
-    /*clutter_table_layout_set_alignment( layout, view,*/
-            /*CLUTTER_TABLE_ALIGNMENT_CENTER,*/
-            /*CLUTTER_TABLE_ALIGNMENT_CENTER );*/
 
-    /*clutter_actor_add_effect( text_shadow, clutter_blur_effect_new() );*/
-    clutter_table_layout_pack(layout, text_shadow, x, y);
-    clutter_table_layout_set_fill( layout, text_shadow, FALSE, FALSE );
-    clutter_table_layout_set_expand( layout, text_shadow, FALSE, FALSE );
-    clutter_table_layout_set_alignment( layout, text_shadow,
-            CLUTTER_TABLE_ALIGNMENT_START,
-            CLUTTER_TABLE_ALIGNMENT_START );
-
-    clutter_table_layout_pack(layout, text, x, y);
-    clutter_table_layout_set_fill( layout, text, FALSE, FALSE );
-    clutter_table_layout_set_expand( layout, text, FALSE, FALSE );
-    clutter_table_layout_set_alignment( layout, text,
-            CLUTTER_TABLE_ALIGNMENT_START,
-            CLUTTER_TABLE_ALIGNMENT_START );
-
-    app->view = view;
-    /*update(app);*/
-
+    /* restore scroll */
     w = (clutter_actor_get_width(app->viewport)-w)/2;
     scrollable_set_scroll(app->viewport, xx+w, yy, 0);
 
@@ -424,6 +440,28 @@ clean_container(ClutterActor *actor)
     g_list_free(children);
 }
 
+static void
+crop_container(ClutterActor *actor, guint n)
+{
+    GList *children, *it;
+    guint i;
+
+    children = clutter_container_get_children( CLUTTER_CONTAINER(actor) );
+    for( i = 0, it = children; it && i < n; ++i, it = it->next );
+    for( ; it; it = it->next )
+        clutter_container_remove_actor( CLUTTER_CONTAINER(actor), CLUTTER_ACTOR(it->data) );
+    g_list_free(children);
+}
+
+static void
+clean_items(Application *app)
+{
+    /* clean container and reset scroll offset */
+    clean_container(app->viewport);
+    scrollable_set_scroll( app->viewport, 0, 0, 0 );
+    app->count = 0;
+}
+
 static gboolean
 load_images(Application *app)
 {
@@ -439,10 +477,8 @@ load_images(Application *app)
     y = clutter_table_layout_get_row_count( CLUTTER_TABLE_LAYOUT(app->layout) )-1;
 
     if (app->restart) {
-        g_printerr("imagepeek: Restarting.\n");
         app->restart = FALSE;
-        clean_container(app->viewport);
-        app->count = 0;
+        clean_items(app);
     }
     clutter_threads_leave();
 
@@ -474,27 +510,49 @@ load_images(Application *app)
 static void
 load_more(Application *app)
 {
+    guint r1, c1, r2, c2;
+    GString *title;
+    gchar* title2;
+
     if (app->loading) {
         app->restart = TRUE;
         return;
     }
-    app->loading = TRUE;
     app->restart = FALSE;
 
-    /* clean table */
-    clean_container(app->viewport);
-    app->count = 0;
+    r1 = clutter_table_layout_get_row_count( CLUTTER_TABLE_LAYOUT(app->layout) );
+    c1 = clutter_table_layout_get_column_count( CLUTTER_TABLE_LAYOUT(app->layout) );
+    r2 = app->options.rows;
+    c2 = app->options.columns;
 
-    /* load images (when idle) */
-    /*while( load_images(app) ) load_images(app);*/
-    clutter_threads_add_idle( (GSourceFunc)load_images, app );
-    /*g_idle_add( (GSourceFunc)load_images, app );*/
+    if ( (r1 > r2 && c1 == c2) || (c1 > c2 && r1 == r2 && r2 == 1) ) {
+        /* remove last items */
+        app->count = r2*c2;
+        crop_container(app->viewport, r2*c2);
+    } else if (r1 != r2 || c1 != c2) {
+        if ( r1 == 0 || (r1 > 1 && c1 != c2) ) {
+            /* reaload all items */
+            clean_items(app);
+
+            /* set window title */
+            title = g_string_new(app->argv[app->current_offset+1]);
+            g_string_append(title, " - imagepeek");
+            title2 = g_string_free(title, FALSE);
+            clutter_stage_set_title( CLUTTER_STAGE(app->stage), title2 );
+            g_free(title2);
+        }
+
+        app->loading = TRUE;
+        if ( load_images(app) )
+            g_idle_add( (GSourceFunc)load_images, app );
+    }
 }
 
 static void
 set_current_offset(Application *app, guint offset)
 {
     if (offset+1 < app->argc) {
+        clean_items(app);
         app->current_offset = offset;
         load_more(app);
     }
@@ -525,6 +583,7 @@ on_key_press(ClutterActor *stage,
     Application *app;
     guint keyval;
     gdouble s, s2;
+    gfloat x;
 
     app = (Application *)user_data;
     ClutterModifierType state = clutter_event_get_state(event);
@@ -539,9 +598,7 @@ on_key_press(ClutterActor *stage,
                 s *= 1.0 + app->options.zoom_increment;
             else
                 s += app->options.zoom_increment;
-            set_zoom(app->viewport, s, app->options.zoom_animation,
-                    G_CALLBACK(on_zoom_completed), app);
-            update(app);
+            set_zoom_simple(app, s);
             break;
         case CLUTTER_KEY_KP_Subtract:
             s = get_zoom(app->viewport);
@@ -549,40 +606,57 @@ on_key_press(ClutterActor *stage,
                 s /= 1.0 + app->options.zoom_increment;
             else
                 s -= app->options.zoom_increment;
-            set_zoom(app->viewport, s, app->options.zoom_animation,
-                    G_CALLBACK(on_zoom_completed), app);
-            update(app);
+            set_zoom_simple(app, s);
+            break;
+        case CLUTTER_KEY_KP_9:
+        case CLUTTER_KEY_KP_8:
+        case CLUTTER_KEY_KP_7:
+        case CLUTTER_KEY_KP_6:
+        case CLUTTER_KEY_KP_5:
+        case CLUTTER_KEY_KP_4:
+        case CLUTTER_KEY_KP_3:
+        case CLUTTER_KEY_KP_2:
+        case CLUTTER_KEY_KP_1:
+        case CLUTTER_KEY_9:
+        case CLUTTER_KEY_8:
+        case CLUTTER_KEY_7:
+        case CLUTTER_KEY_6:
+        case CLUTTER_KEY_5:
+        case CLUTTER_KEY_4:
+        case CLUTTER_KEY_3:
+        case CLUTTER_KEY_2:
+        case CLUTTER_KEY_1:
+            if (keyval > CLUTTER_KEY_KP_0 && keyval <= CLUTTER_KEY_KP_9 )
+                s = (gdouble)(keyval - CLUTTER_KEY_KP_0);
+            else
+                s = (gdouble)(keyval - CLUTTER_KEY_0);
+            if (state & CLUTTER_CONTROL_MASK)
+                s = 1.0/s;
+            set_zoom_simple(app, s);
             break;
 
-        /* zoom to width/height */
+        /* zoom to fit vertically/horizontally */
         case CLUTTER_KEY_w:
             s = clutter_actor_get_width(stage)/clutter_actor_get_width(app->viewport);
-            set_zoom(app->viewport, s, app->options.zoom_animation,
-                    G_CALLBACK(on_zoom_completed), app);
-            update(app);
+            set_zoom_simple(app, s);
             break;
         case CLUTTER_KEY_h:
             s = clutter_actor_get_height(stage)/clutter_actor_get_height(app->viewport);
-            set_zoom(app->viewport, s, app->options.zoom_animation,
-                    G_CALLBACK(on_zoom_completed), app);
-            update(app);
+            set_zoom_simple(app, s);
             break;
 
         /* zoom to fit */
+        case CLUTTER_KEY_KP_0:
         case CLUTTER_KEY_KP_Divide:
             s = clutter_actor_get_width(stage)/clutter_actor_get_width(app->viewport);
             s2 = clutter_actor_get_height(stage)/clutter_actor_get_height(app->viewport);
             if ( s > s2 ) s = s2;
-            set_zoom(app->viewport, s, app->options.zoom_animation,
-                    G_CALLBACK(on_zoom_completed), app);
-            update(app);
+            set_zoom_simple(app, s);
             break;
 
         /* zoom reset */
         case CLUTTER_KEY_KP_Multiply:
-            set_zoom(app->viewport, 1.0, app->options.zoom_animation,
-                    G_CALLBACK(on_zoom_completed), app);
-            update(app);
+            set_zoom_simple(app, 1.0);
             break;
 
         /* sharpen filter strength */
@@ -598,20 +672,54 @@ on_key_press(ClutterActor *stage,
 
         /* fullscreen */
         case CLUTTER_KEY_f:
-            clutter_stage_set_fullscreen( CLUTTER_STAGE(app->stage),
-                    !clutter_stage_get_fullscreen(CLUTTER_STAGE(app->stage)) );
+            clutter_stage_set_fullscreen( CLUTTER_STAGE(stage),
+                    !clutter_stage_get_fullscreen(CLUTTER_STAGE(stage)) );
             break;
 
-        /* next/prev page */
+        /* next page */
         case CLUTTER_KEY_j:
         case CLUTTER_KEY_n:
         case CLUTTER_KEY_KP_Enter:
         case CLUTTER_KEY_Return:
             load_next(app);
             break;
+        case CLUTTER_KEY_Right:
+            if ( (gint)clutter_actor_get_width(stage) >= (gint)(clutter_actor_get_width(app->viewport)*get_zoom(app->viewport)) )
+                load_next(app);
+            break;
+        case CLUTTER_KEY_Down:
+            if ( (gint)clutter_actor_get_height(stage) >= (gint)(clutter_actor_get_height(app->viewport)*get_zoom(app->viewport)) )
+                load_next(app);
+            break;
+
+        /* prev page */
         case CLUTTER_KEY_k:
         case CLUTTER_KEY_p:
+        case CLUTTER_KEY_N:
             load_prev(app);
+            break;
+        case CLUTTER_KEY_Left:
+            if ( (gint)clutter_actor_get_width(stage) >= (gint)(clutter_actor_get_width(app->viewport)*get_zoom(app->viewport)) )
+                load_prev(app);
+            break;
+        case CLUTTER_KEY_Up:
+            if ( (gint)clutter_actor_get_height(stage) >= (gint)(clutter_actor_get_height(app->viewport)*get_zoom(app->viewport)) )
+                load_prev(app);
+            break;
+
+        case CLUTTER_KEY_space:
+            if ( state & CLUTTER_SHIFT_MASK ) {
+                if (app->current_offset == 0) break;
+                load_prev(app);
+                scrollable_get_scroll( app->viewport, &x, NULL );
+                scrollable_set_scroll( app->viewport,
+                        x,
+                        clutter_actor_get_height(app->viewport),
+                        0 );
+            } else {
+                if (app->current_offset+1 >= app->argc) break;
+                load_next(app);
+            }
             break;
 
         /* add rows/columns */
@@ -619,25 +727,30 @@ on_key_press(ClutterActor *stage,
         case CLUTTER_KEY_R:
             if ( state & CLUTTER_SHIFT_MASK ) {
                 if (app->options.rows == 1) break;
-                app->count = MAX(0, app->count - app->options.rows * app->options.columns);
                 app->options.rows = app->options.rows - 1;
             } else {
-                app->count = MAX(0, app->count - app->options.rows * app->options.columns);
                 app->options.rows = app->options.rows + 1;
             }
             load_more(app);
             break;
         case CLUTTER_KEY_c:
         case CLUTTER_KEY_C:
-            if ( state & CLUTTER_SHIFT_MASK ) {
-                if (app->options.columns == 1) break;
-                app->count = MAX(0, app->count - app->options.rows * app->options.columns);
-                app->options.columns = app->options.columns - 1;
+            if (app->options.rows > 1) {
+                if ( state & CLUTTER_SHIFT_MASK ) {
+                    if (app->options.columns == 1) break;
+                    app->options.columns = app->options.columns - 1;
+                } else {
+                    app->options.columns = app->options.columns + 1;
+                }
+                load_more(app);
             } else {
-                app->count = MAX(0, app->count - app->options.rows * app->options.columns);
-                app->options.columns = app->options.columns + 1;
+                if ( state & CLUTTER_SHIFT_MASK ) {
+                    app->options.columns = app->options.columns - 1;
+                } else {
+                    app->options.columns = app->options.columns + 1;
+                }
+                load_more(app);
             }
-            load_more(app);
             break;
 
         /* exit */
@@ -672,6 +785,15 @@ init_options(Options *options)
 }
 
 static void
+on_allocation_changed(ClutterActor *actor,
+        ClutterActorBox *box,
+        ClutterAllocationFlags flags,
+        Application *app)
+{
+    update(app, FALSE);
+}
+
+static void
 init_app(Application *app, int argc, char **argv)
 {
     ClutterActor *box;
@@ -693,6 +815,10 @@ init_app(Application *app, int argc, char **argv)
     clutter_container_add_actor( CLUTTER_CONTAINER(app->stage), box );
     clutter_actor_add_constraint( box, clutter_align_constraint_new(app->stage, CLUTTER_ALIGN_X_AXIS, 0.5) );
     clutter_actor_add_constraint( box, clutter_align_constraint_new(app->stage, CLUTTER_ALIGN_Y_AXIS, 0.5) );
+    g_signal_connect( box,
+            "allocation-changed",
+            G_CALLBACK(on_allocation_changed),
+            app );
 
     app->layout = clutter_table_layout_new();
     clutter_table_layout_set_column_spacing( CLUTTER_TABLE_LAYOUT(app->layout), app->options.item_spacing );
@@ -709,8 +835,6 @@ init_app(Application *app, int argc, char **argv)
             "key-press-event",
             G_CALLBACK(on_key_press),
             app );
-
-    app->view = NULL;
 
     clutter_stage_set_key_focus( CLUTTER_STAGE(app->stage), app->viewport );
     clutter_actor_show_all(app->stage);
