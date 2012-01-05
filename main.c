@@ -127,14 +127,15 @@ static void
 scrollable_set_scroll(ClutterActor *actor, gfloat x, gfloat y, guint scroll_animation)
 {
     ClutterActor *parent;
-    gfloat max_x, max_y, xx, yy, zz;
+    gfloat max_x, max_y, xx, yy, zz, w, h;
     gdouble z;
 
     parent = scrollable_get_offset_parent(actor);
+    clutter_actor_get_size(parent, &w, &h);
     clutter_actor_get_scale(actor, &z, NULL);
     zz = (gfloat)z;
-    max_x = clutter_actor_get_width(actor) - clutter_actor_get_width(parent)/zz;
-    max_y = clutter_actor_get_height(actor) - clutter_actor_get_height(parent)/zz;
+    max_x = clutter_actor_get_width(actor) - w/zz;
+    max_y = clutter_actor_get_height(actor) - h/zz;
     xx = max_x <= 0.0 ? 0.0 : ( CLAMP(x, 0.0, max_x) - max_x/2 );
     yy = max_y <= 0.0 ? 0.0 : ( CLAMP(y, 0.0, max_y) - max_y/2 );
 
@@ -146,8 +147,6 @@ scrollable_set_scroll(ClutterActor *actor, gfloat x, gfloat y, guint scroll_anim
     } else {
         clutter_actor_set_anchor_point(actor, xx, yy);
     }
-
-    scrollable_get_scroll(actor, &xx, &yy);
 }
 
 static gboolean
@@ -319,7 +318,9 @@ sharpen(ClutterActor *actor, gfloat sharpen_strength)
     shader = clutter_actor_get_effect(actor, "SHARPEN");
     if (!shader) {
         shader = clutter_shader_effect_new(CLUTTER_FRAGMENT_SHADER);
-        clutter_shader_effect_set_shader_source( CLUTTER_SHADER_EFFECT(shader), FRAGMENT_SHADER );
+        if ( !clutter_shader_effect_set_shader_source(
+                    CLUTTER_SHADER_EFFECT(shader), FRAGMENT_SHADER) )
+            g_printerr("imagepeek: Cannot set fragment shader!\n");
         clutter_actor_add_effect_with_name(actor, "SHARPEN", shader);
     }
 
@@ -717,7 +718,6 @@ on_key_press(ClutterActor *stage,
                         clutter_actor_get_height(app->viewport),
                         0 );
             } else {
-                if (app->current_offset+1 >= app->argc) break;
                 load_next(app);
             }
             break;
@@ -751,6 +751,12 @@ on_key_press(ClutterActor *stage,
                 }
                 load_more(app);
             }
+            break;
+
+        /* reload */
+        case CLUTTER_KEY_F5:
+            clean_items(app);
+            load_more(app);
             break;
 
         /* exit */
@@ -824,6 +830,7 @@ init_app(Application *app, int argc, char **argv)
     clutter_table_layout_set_column_spacing( CLUTTER_TABLE_LAYOUT(app->layout), app->options.item_spacing );
     clutter_table_layout_set_row_spacing( CLUTTER_TABLE_LAYOUT(app->layout), app->options.item_spacing );
     app->viewport = clutter_box_new(app->layout);
+    /*clutter_actor_set_offscreen_redirect(app->viewport, CLUTTER_OFFSCREEN_REDIRECT_ALWAYS);*/
     clutter_container_add_actor( CLUTTER_CONTAINER(box), app->viewport );
     g_object_set( app->viewport,
             "scale-gravity", CLUTTER_GRAVITY_CENTER,
@@ -839,7 +846,6 @@ init_app(Application *app, int argc, char **argv)
     clutter_stage_set_key_focus( CLUTTER_STAGE(app->stage), app->viewport );
     clutter_actor_show_all(app->stage);
     clutter_stage_set_user_resizable( CLUTTER_STAGE(app->stage), TRUE );
-    /* TODO: scroll on resize or better layout */
 
     load_more(app);
 }
