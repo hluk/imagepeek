@@ -421,8 +421,10 @@ load_image(Application *app, const char *filename, gint x, gint y)
 
     /* add item and label */
     clutter_table_layout_pack(layout, item, x, y);
-    clutter_table_layout_set_fill( layout, view, FALSE, FALSE );
-    clutter_table_layout_set_expand( layout, view, FALSE, FALSE );
+    if (view) {
+        clutter_table_layout_set_fill( layout, view, FALSE, FALSE );
+        clutter_table_layout_set_expand( layout, view, FALSE, FALSE );
+    }
 
     /* restore scroll */
     w = (clutter_actor_get_width(app->viewport)-w)/2;
@@ -816,6 +818,7 @@ load_key_double(GKeyFile *keyfile, const gchar *key, gdouble default_value)
     if ( g_key_file_has_key(keyfile, "general", key, NULL) ) {
         dval = g_key_file_get_double(keyfile, "general", key, &err);
         if (err) {
+            g_printerr("imagepeek: Error while parsing session file! (%s)\n", err->message);
             g_error_free(err);
             return default_value;
         }
@@ -833,6 +836,7 @@ load_key_uint(GKeyFile *keyfile, const gchar *key, guint64 default_value)
     if ( g_key_file_has_key(keyfile, "general", key, NULL) ) {
         ival = g_key_file_get_uint64(keyfile, "general", key, &err);
         if (err) {
+            g_printerr("imagepeek: Error while parsing session file! (%s)\n", err->message);
             g_error_free(err);
             return default_value;
         }
@@ -850,6 +854,7 @@ load_key_string_list(GKeyFile *keyfile, const gchar *key, gsize *size, char **de
     if ( g_key_file_has_key(keyfile, "general", key, NULL) ) {
         list = g_key_file_get_string_list(keyfile, "general", key, size, &err);
         if (err) {
+            g_printerr("imagepeek: Error while parsing session file! (%s)\n", err->message);
             g_error_free(err);
             return default_value;
         }
@@ -867,6 +872,7 @@ load_key_boolean(GKeyFile *keyfile, const gchar *key, gboolean default_value)
     if ( g_key_file_has_key(keyfile, "general", key, NULL) ) {
         bval = g_key_file_get_boolean(keyfile, "general", key, &err);
         if (err) {
+            g_printerr("imagepeek: Error while parsing session file! (%s)\n", err->message);
             g_error_free(err);
             return default_value;
         }
@@ -958,6 +964,8 @@ init_app(Application *app, int argc, char **argv)
     app->loading = FALSE;
     app->restart = FALSE;
     app->session_file = g_getenv("IMAGEPEEK_SESSION");
+    app->argc = 0;
+    app->argv = NULL;
 
     app->stage = clutter_stage_get_default();
     clutter_stage_set_color( CLUTTER_STAGE(app->stage), &app->options.background_color );
@@ -1021,8 +1029,10 @@ int main(int argc, char **argv)
     if ( clutter_init(&argc, &argv) != CLUTTER_INIT_SUCCESS )
         return 1;
     init_options(&app.options);
-    if ( !init_app(&app, argc, argv) )
+    if ( !init_app(&app, argc, argv) ) {
+        g_printerr("imagepeek: No images loaded!\n");
         return 1;
+    }
 
     /* main loop */
     clutter_main();
@@ -1037,5 +1047,6 @@ int main(int argc, char **argv)
         }
     }
 
+    g_printerr("imagepeek: Exiting.\n");
     return error;
 }
