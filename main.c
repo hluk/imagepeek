@@ -38,6 +38,7 @@ struct _Options {
     guint zoom_animation;
     guint scroll_animation;
     guint rows, columns;
+    gboolean fullscreen;
 };
 
 struct _Application {
@@ -649,6 +650,7 @@ on_key_press(ClutterActor *stage,
             break;
 
         /* zoom to fit */
+        case CLUTTER_KEY_0:
         case CLUTTER_KEY_KP_0:
         case CLUTTER_KEY_KP_Divide:
             s = clutter_actor_get_width(stage)/clutter_actor_get_width(app->viewport);
@@ -675,8 +677,9 @@ on_key_press(ClutterActor *stage,
 
         /* fullscreen */
         case CLUTTER_KEY_f:
+            app->options.fullscreen = !clutter_stage_get_fullscreen(CLUTTER_STAGE(stage));
             clutter_stage_set_fullscreen( CLUTTER_STAGE(stage),
-                    !clutter_stage_get_fullscreen(CLUTTER_STAGE(stage)) );
+                    app->options.fullscreen );
             break;
 
         /* next page */
@@ -699,6 +702,8 @@ on_key_press(ClutterActor *stage,
         case CLUTTER_KEY_k:
         case CLUTTER_KEY_p:
         case CLUTTER_KEY_N:
+        case CLUTTER_KEY_b:
+        case CLUTTER_KEY_BackSpace:
             load_prev(app);
             break;
         case CLUTTER_KEY_Left:
@@ -790,6 +795,7 @@ init_options(Options *options)
     options->scroll_animation = 100;
     options->rows = 1;
     options->columns = 1;
+    options->fullscreen = FALSE;
 }
 
 static void
@@ -853,6 +859,23 @@ load_key_string_list(GKeyFile *keyfile, const gchar *key, gsize *size, char **de
 }
 
 static gboolean
+load_key_boolean(GKeyFile *keyfile, const gchar *key, gboolean default_value)
+{
+    gboolean bval = default_value;
+    GError *err = NULL;
+
+    if ( g_key_file_has_key(keyfile, "general", key, NULL) ) {
+        bval = g_key_file_get_boolean(keyfile, "general", key, &err);
+        if (err) {
+            g_error_free(err);
+            return default_value;
+        }
+    }
+
+    return bval;
+}
+
+static gboolean
 restore_session(const char *filename, Application *app)
 {
     GKeyFile *keyfile;
@@ -863,17 +886,20 @@ restore_session(const char *filename, Application *app)
     if ( !g_key_file_load_from_file(keyfile, filename, G_KEY_FILE_KEEP_COMMENTS, NULL) )
         return FALSE;
 
+    app->argv = load_key_string_list(keyfile, "items", (gsize *)&(app->argc), NULL );
+    if (!app->argv)
+        return FALSE;
     dval = load_key_double(keyfile, "zoom", 1.0);
     set_zoom_simple(app, dval);
     dval = load_key_double(keyfile, "sharpen", 0.0);
     app->options.sharpen_strength = (gfloat)dval;
     sharpen(app->viewport, app->options.sharpen_strength);
-    app->current_offset = load_key_uint(keyfile, "item_offset", 0);
+    app->current_offset = load_key_uint(keyfile, "current", 0);
     app->options.rows = load_key_uint(keyfile, "rows", 1);
     app->options.columns = load_key_uint(keyfile, "columns", 1);
-    app->argv = load_key_string_list(keyfile, "items", (gsize *)&(app->argc), NULL );
-    if (!app->argv)
-        return FALSE;
+    app->options.fullscreen = load_key_boolean(keyfile, "fullscreen", FALSE);
+    clutter_stage_set_fullscreen( CLUTTER_STAGE(app->stage),
+            app->options.fullscreen );
 
     return TRUE;
 }
@@ -891,18 +917,20 @@ save_session(const char *filename, const Application *app)
     if (f) {
         keyfile = g_key_file_new();
 
+        g_key_file_set_string_list( keyfile, "general",
+                "items", (const gchar **)app->argv, (gsize)app->argc );
         g_key_file_set_double( keyfile, "general",
                 "zoom", get_zoom(app->viewport) );
         g_key_file_set_double( keyfile, "general",
                 "sharpen", (gdouble)app->options.sharpen_strength );
         g_key_file_set_uint64( keyfile, "general",
-                "item_offset", (guint64)app->current_offset );
+                "current", (guint64)app->current_offset );
         g_key_file_set_uint64( keyfile, "general",
                 "rows", (guint64)app->options.rows );
         g_key_file_set_uint64( keyfile, "general",
                 "columns", (guint64)app->options.columns );
-        g_key_file_set_string_list( keyfile, "general",
-                "items", (const gchar **)app->argv, (gsize)app->argc );
+        g_key_file_set_boolean( keyfile, "general",
+                "fullscreen", app->options.fullscreen );
 
         data = g_key_file_to_data(keyfile, &size, NULL);
         if ( fwrite(data, size, 1, f) != 1 ) {
@@ -925,8 +953,6 @@ init_app(Application *app, int argc, char **argv)
     ClutterActor *box;
     ClutterLayoutManager *layout;
 
-    app->argc = argc;
-    app->argv = argv;
     app->count = 0;
     app->current_offset = 0;
     app->loading = FALSE;
@@ -968,15 +994,20 @@ init_app(Application *app, int argc, char **argv)
     clutter_actor_show_all(app->stage);
     clutter_stage_set_user_resizable( CLUTTER_STAGE(app->stage), TRUE );
 
-    /* check arguments */
-    if (argc < 2) {
-        if ( app->session_file && restore_session(app->session_file, app) ) {
-            g_printerr("imagepeek: Session file \"%s\" loaded.\n", app->session_file);
-        } else {
-            return FALSE;
-        }
+    /* load session */
+    if ( app->session_file && restore_session(app->session_file, app) )
+        g_printerr("imagepeek: Session file \"%s\" loaded.\n", app->session_file);
+
+    /* images from arguments or session */
+    if ( argc > 1 ) {
+        app->argc = argc;
+        app->argv = argv;
+        app->current_offset = 0;
     }
-    load_more(app);
+    if (app->argc < 2)
+        return FALSE;
+
+    set_current_offset(app, app->current_offset);
 
     return TRUE;
 }
