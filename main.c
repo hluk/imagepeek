@@ -53,6 +53,8 @@ struct _Application {
 
     gboolean loading;
     gboolean restart;
+
+    const gchar *session_file;
 };
 
 static const gfloat scroll_amount = 100.0;
@@ -799,7 +801,125 @@ on_allocation_changed(ClutterActor *actor,
     update(app, FALSE);
 }
 
-static void
+static gdouble
+load_key_double(GKeyFile *keyfile, const gchar *key, gdouble default_value)
+{
+    double dval = default_value;
+    GError *err = NULL;
+
+    if ( g_key_file_has_key(keyfile, "general", key, NULL) ) {
+        dval = g_key_file_get_double(keyfile, "general", key, &err);
+        if (err) {
+            g_error_free(err);
+            return default_value;
+        }
+    }
+
+    return dval;
+}
+
+static guint64
+load_key_uint(GKeyFile *keyfile, const gchar *key, guint64 default_value)
+{
+    guint64 ival = default_value;
+    GError *err = NULL;
+
+    if ( g_key_file_has_key(keyfile, "general", key, NULL) ) {
+        ival = g_key_file_get_uint64(keyfile, "general", key, &err);
+        if (err) {
+            g_error_free(err);
+            return default_value;
+        }
+    }
+
+    return ival;
+}
+
+static char**
+load_key_string_list(GKeyFile *keyfile, const gchar *key, gsize *size, char **default_value)
+{
+    char **list = default_value;
+    GError *err = NULL;
+
+    if ( g_key_file_has_key(keyfile, "general", key, NULL) ) {
+        list = g_key_file_get_string_list(keyfile, "general", key, size, &err);
+        if (err) {
+            g_error_free(err);
+            return default_value;
+        }
+    }
+
+    return list;
+}
+
+static gboolean
+restore_session(const char *filename, Application *app)
+{
+    GKeyFile *keyfile;
+    double dval;
+
+    keyfile = g_key_file_new();
+
+    if ( !g_key_file_load_from_file(keyfile, filename, G_KEY_FILE_KEEP_COMMENTS, NULL) )
+        return FALSE;
+
+    dval = load_key_double(keyfile, "zoom", 1.0);
+    set_zoom_simple(app, dval);
+    dval = load_key_double(keyfile, "sharpen", 0.0);
+    app->options.sharpen_strength = (gfloat)dval;
+    sharpen(app->viewport, app->options.sharpen_strength);
+    app->current_offset = load_key_uint(keyfile, "item_offset", 0);
+    app->options.rows = load_key_uint(keyfile, "rows", 1);
+    app->options.columns = load_key_uint(keyfile, "columns", 1);
+    app->argv = load_key_string_list(keyfile, "items", (gsize *)&(app->argc), NULL );
+    if (!app->argv)
+        return FALSE;
+
+    return TRUE;
+}
+
+static gboolean
+save_session(const char *filename, const Application *app)
+{
+    GKeyFile *keyfile;
+    FILE *f;
+    gchar *data;
+    gsize size;
+    gboolean ret = TRUE;
+
+    f = fopen(filename, "w");
+    if (f) {
+        keyfile = g_key_file_new();
+
+        g_key_file_set_double( keyfile, "general",
+                "zoom", get_zoom(app->viewport) );
+        g_key_file_set_double( keyfile, "general",
+                "sharpen", (gdouble)app->options.sharpen_strength );
+        g_key_file_set_uint64( keyfile, "general",
+                "item_offset", (guint64)app->current_offset );
+        g_key_file_set_uint64( keyfile, "general",
+                "rows", (guint64)app->options.rows );
+        g_key_file_set_uint64( keyfile, "general",
+                "columns", (guint64)app->options.columns );
+        g_key_file_set_string_list( keyfile, "general",
+                "items", (const gchar **)app->argv, (gsize)app->argc );
+
+        data = g_key_file_to_data(keyfile, &size, NULL);
+        if ( fwrite(data, size, 1, f) != 1 ) {
+            ret = FALSE;
+        }
+        g_free(data);
+
+        fclose(f);
+    } else {
+        ret = FALSE;
+    }
+
+    return ret;
+}
+
+
+static gboolean
 init_app(Application *app, int argc, char **argv)
 {
     ClutterActor *box;
@@ -811,6 +931,7 @@ init_app(Application *app, int argc, char **argv)
     app->current_offset = 0;
     app->loading = FALSE;
     app->restart = FALSE;
+    app->session_file = g_getenv("IMAGEPEEK_SESSION");
 
     app->stage = clutter_stage_get_default();
     clutter_stage_set_color( CLUTTER_STAGE(app->stage), &app->options.background_color );
@@ -847,24 +968,43 @@ init_app(Application *app, int argc, char **argv)
     clutter_actor_show_all(app->stage);
     clutter_stage_set_user_resizable( CLUTTER_STAGE(app->stage), TRUE );
 
+    /* check arguments */
+    if (argc < 2) {
+        if ( app->session_file && restore_session(app->session_file, app) ) {
+            g_printerr("imagepeek: Session file \"%s\" loaded.\n", app->session_file);
+        } else {
+            return FALSE;
+        }
+    }
     load_more(app);
+
+    return TRUE;
 }
 
 int main(int argc, char **argv)
 {
     Application app;
-
-    /* check arguments */
-    if (argc < 2)
-        return 1;
+    int error = 0;
 
     /* init app */
     if ( clutter_init(&argc, &argv) != CLUTTER_INIT_SUCCESS )
         return 1;
     init_options(&app.options);
-    init_app(&app, argc, argv);
+    if ( !init_app(&app, argc, argv) )
+        return 1;
 
+    /* main loop */
     clutter_main();
 
-    return 0;
+    /* save session */
+    if (app.session_file) {
+        if ( save_session(app.session_file, &app) ) {
+            g_printerr("imagepeek: Session file \"%s\" saved.\n", app.session_file);
+        } else {
+            g_printerr("imagepeek: Cannot save session file!\n");
+            ++error;
+        }
+    }
+
+    return error;
 }
