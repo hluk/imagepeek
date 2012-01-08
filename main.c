@@ -47,9 +47,13 @@ struct _Application {
     ClutterActor *viewport;
     Options options;
 
+    /* number of items */
     guint argc;
-    char **argv;
+    /* list of items */
+    gchar **argv;
+    /* index of first item on the page */
     gint current_offset;
+    /* number of loaded items */
     guint count;
 
     gboolean loading;
@@ -60,6 +64,78 @@ struct _Application {
 
 static const gfloat scroll_amount = 100.0;
 static const gfloat scroll_skip_factor = 0.9;
+
+static guint
+get_count(const Application *app)
+{
+    return app->argc;
+}
+
+static guint
+get_columns(const Application *app)
+{
+    return app->options.columns;
+}
+
+static void
+set_columns(Application *app, guint columns)
+{
+    app->options.columns = CLAMP(columns, 1, get_count(app));
+}
+
+static guint
+get_rows(const Application *app)
+{
+    return app->options.rows;
+}
+
+static void
+set_rows(Application *app, guint rows)
+{
+    app->options.rows = CLAMP(rows, 1, get_count(app));
+}
+
+static guint
+get_current_offset(const Application *app)
+{
+    return app->current_offset;
+}
+
+static gboolean
+set_current_offset(Application *app, guint offset)
+{
+    if ( offset >= get_count(app) )
+        return FALSE;
+
+    app->current_offset = offset;
+
+    return TRUE;
+}
+
+static gchar**
+get_items(const Application *app)
+{
+    return app->argv;
+}
+
+static gchar*
+get_item(const Application *app, guint index)
+{
+    if ( index < get_count(app) )
+        return get_items(app)[index];
+    return NULL;
+}
+
+static void
+set_items(Application *app, gchar **items, guint count)
+{
+    /* TODO: delete previous list of items if necessary */
+    app->argc = count;
+    app->argv = items;
+    set_rows( app, get_rows(app) );
+    set_columns( app, get_columns(app) );
+    set_current_offset(app, 0);
+}
 
 static gdouble
 get_zoom(ClutterActor *actor)
@@ -307,16 +383,38 @@ init_scrollable(ClutterActor *actor, guint *scroll_animation)
     clutter_actor_add_action(actor, drag);
 }
 
+static gboolean
+get_fullscreen(const Application *app)
+{
+    return clutter_stage_get_fullscreen( CLUTTER_STAGE(app->stage) );
+}
+
 static void
-sharpen(ClutterActor *actor, gfloat sharpen_strength)
+set_fullscreen(Application *app, gboolean fullscreen)
+{
+    clutter_stage_set_fullscreen( CLUTTER_STAGE(app->stage), fullscreen );
+}
+
+static gfloat
+get_sharpen(const Application *app)
+{
+    return app->options.sharpen_strength;
+}
+
+static void
+set_sharpen(Application *app, gfloat sharpen_strength)
 {
     gfloat w, h;
     ClutterEffect *shader;
+    ClutterActor *actor = app->viewport;
 
-    if (sharpen_strength == 0.0) {
+    if (sharpen_strength <= 0.0) {
+        app->options.sharpen_strength = 0.0;
         clutter_actor_remove_effect_by_name(actor, "SHARPEN");
         return;
     }
+
+    app->options.sharpen_strength = sharpen_strength;
 
     shader = clutter_actor_get_effect(actor, "SHARPEN");
     if (!shader) {
@@ -349,7 +447,7 @@ update(Application *app, gboolean update_filters)
     scrollable_set_scroll(app->viewport, x, y, 0);
 
     if (update_filters)
-        sharpen(app->viewport, app->options.sharpen_strength);
+        set_sharpen( app, get_sharpen(app) );
 }
 
 static void
@@ -383,7 +481,7 @@ load_image(Application *app, const char *filename, gint x, gint y)
         g_printerr("imagepeek: Cannot open \"%s\"!\n", filename);
     }
 
-    if (app->options.rows > 1 || app->options.columns > 1 || !view) {
+    if ( get_rows(app) > 1 || get_columns(app) > 1 || !view ) {
         /* text shadow */
         text_shadow = clutter_text_new_full(app->options.text_font, filename, &app->options.text_shadow);
         clutter_text_set_ellipsize( CLUTTER_TEXT(text_shadow), PANGO_ELLIPSIZE_MIDDLE );
@@ -471,15 +569,12 @@ clean_items(Application *app)
 static gboolean
 load_images(Application *app)
 {
-    guint i, x, y, count, rows, columns, max;
+    guint i, x, y, count;
 
     clutter_threads_enter();
     count = app->count;
-    i = app->current_offset + count;
-    rows = app->options.rows;
-    columns = app->options.columns;
-    max = app->argc-1;
-    x = count % columns;
+    i = get_current_offset(app) + count;
+    x = count % get_columns(app);
     y = clutter_table_layout_get_row_count( CLUTTER_TABLE_LAYOUT(app->layout) )-1;
 
     if (app->restart) {
@@ -488,7 +583,7 @@ load_images(Application *app)
     }
     clutter_threads_leave();
 
-    if( i >= max ) {
+    if( i >= get_count(app) ) {
         clutter_threads_enter();
         app->loading = FALSE;
         clutter_threads_leave();
@@ -497,7 +592,7 @@ load_images(Application *app)
 
     if (x == 0) {
         ++y;
-        if (y >= rows ) {
+        if (y >= get_rows(app) ) {
             clutter_threads_enter();
             app->loading = FALSE;
             clutter_threads_leave();
@@ -509,7 +604,7 @@ load_images(Application *app)
     clutter_threads_enter();
     ++app->count;
     clutter_threads_leave();
-    load_image( app, app->argv[i+1], x, y );
+    load_image( app, get_item(app, i), x, y );
     return TRUE;
 }
 
@@ -528,20 +623,20 @@ load_more(Application *app)
 
     r1 = clutter_table_layout_get_row_count( CLUTTER_TABLE_LAYOUT(app->layout) );
     c1 = clutter_table_layout_get_column_count( CLUTTER_TABLE_LAYOUT(app->layout) );
-    r2 = app->options.rows;
-    c2 = app->options.columns;
+    r2 = get_rows(app);
+    c2 = get_columns(app);
 
     if ( (r1 > r2 && c1 == c2) || (c1 > c2 && r1 == r2 && r2 == 1) ) {
         /* remove last items */
         app->count = r2*c2;
         crop_container(app->viewport, r2*c2);
     } else if (r1 != r2 || c1 != c2) {
-        if ( r1 == 0 || (r1 > 1 && c1 != c2) ) {
+        if ( r1 == 0 || (r1 > 1 && c1 != c2) || (r1 != r2 && c1 != c2) ) {
             /* reaload all items */
             clean_items(app);
 
             /* set window title */
-            title = g_string_new(app->argv[app->current_offset+1]);
+            title = g_string_new( get_item(app, get_current_offset(app)) );
             g_string_append(title, " - imagepeek");
             title2 = g_string_free(title, FALSE);
             clutter_stage_set_title( CLUTTER_STAGE(app->stage), title2 );
@@ -555,30 +650,32 @@ load_more(Application *app)
 }
 
 static void
-set_current_offset(Application *app, guint offset)
+reload(Application *app)
 {
-    if (offset+1 < app->argc) {
-        clean_items(app);
-        app->current_offset = offset;
-        load_more(app);
-    }
+    clean_items(app);
+    load_more(app);
 }
 
 static void
 load_next(Application *app)
 {
-    set_current_offset(app, app->current_offset + app->options.rows * app->options.columns);
+    guint offset = get_current_offset(app) + get_rows(app) * get_columns(app);
+    if ( set_current_offset(app, offset) )
+        reload(app);
 }
 
 static void
 load_prev(Application *app)
 {
-    guint d = app->options.rows * app->options.columns;
+    gboolean ok;
+    guint d = get_rows(app) * get_columns(app);
     if ( app->current_offset >= d ) {
-        set_current_offset(app, app->current_offset - d);
+        ok = set_current_offset(app, app->current_offset - d);
     } else if ( app->current_offset > 0 ) {
-        set_current_offset(app, 0);
+        ok = set_current_offset(app, 0);
     }
+    if (ok)
+        reload(app);
 }
 
 static gboolean
@@ -668,20 +765,15 @@ on_key_press(ClutterActor *stage,
 
         /* sharpen filter strength */
         case CLUTTER_KEY_a:
-            app->options.sharpen_strength += 0.05;
-            sharpen(app->viewport, app->options.sharpen_strength);
+            set_sharpen( app, get_sharpen(app) + 0.05 );
             break;
         case CLUTTER_KEY_z:
-            app->options.sharpen_strength =
-                app->options.sharpen_strength > 0.05 ? app->options.sharpen_strength - 0.05 : 0.0;
-            sharpen(app->viewport, app->options.sharpen_strength);
+            set_sharpen( app, get_sharpen(app) - 0.05 );
             break;
 
         /* fullscreen */
         case CLUTTER_KEY_f:
-            app->options.fullscreen = !clutter_stage_get_fullscreen(CLUTTER_STAGE(stage));
-            clutter_stage_set_fullscreen( CLUTTER_STAGE(stage),
-                    app->options.fullscreen );
+            set_fullscreen( app, !get_fullscreen(app) );
             break;
 
         /* next page */
@@ -734,38 +826,20 @@ on_key_press(ClutterActor *stage,
         /* add rows/columns */
         case CLUTTER_KEY_r:
         case CLUTTER_KEY_R:
-            if ( state & CLUTTER_SHIFT_MASK ) {
-                if (app->options.rows == 1) break;
-                app->options.rows = app->options.rows - 1;
-            } else {
-                app->options.rows = app->options.rows + 1;
-            }
+            set_rows( app, get_rows(app) +
+                    ((state & CLUTTER_SHIFT_MASK) ? -1 : 1) );
             load_more(app);
             break;
         case CLUTTER_KEY_c:
         case CLUTTER_KEY_C:
-            if (app->options.rows > 1) {
-                if ( state & CLUTTER_SHIFT_MASK ) {
-                    if (app->options.columns == 1) break;
-                    app->options.columns = app->options.columns - 1;
-                } else {
-                    app->options.columns = app->options.columns + 1;
-                }
-                load_more(app);
-            } else {
-                if ( state & CLUTTER_SHIFT_MASK ) {
-                    app->options.columns = app->options.columns - 1;
-                } else {
-                    app->options.columns = app->options.columns + 1;
-                }
-                load_more(app);
-            }
+            set_columns( app, get_columns(app) +
+                    ((state & CLUTTER_SHIFT_MASK) ? -1 : 1) );
+            load_more(app);
             break;
 
         /* reload */
         case CLUTTER_KEY_F5:
-            clean_items(app);
-            load_more(app);
+            reload(app);
             break;
 
         /* exit */
@@ -784,7 +858,6 @@ on_key_press(ClutterActor *stage,
 static void
 init_options(Options *options)
 {
-    /* TODO: parse configuration from file */
     options->zoom_increment = 0.125;
     options->sharpen_strength = 0.0;
     options->background_color = (ClutterColor){0x00, 0x00, 0x00, 0xff};
@@ -797,7 +870,6 @@ init_options(Options *options)
     options->scroll_animation = 100;
     options->rows = 1;
     options->columns = 1;
-    options->fullscreen = FALSE;
 }
 
 static void
@@ -845,10 +917,10 @@ load_key_uint(GKeyFile *keyfile, const gchar *key, guint64 default_value)
     return ival;
 }
 
-static char**
+static gchar**
 load_key_string_list(GKeyFile *keyfile, const gchar *key, gsize *size, char **default_value)
 {
-    char **list = default_value;
+    gchar **list = default_value;
     GError *err = NULL;
 
     if ( g_key_file_has_key(keyfile, "general", key, NULL) ) {
@@ -885,27 +957,31 @@ static gboolean
 restore_session(const char *filename, Application *app)
 {
     GKeyFile *keyfile;
-    double dval;
+    gsize size;
+    gchar **items;
 
     keyfile = g_key_file_new();
 
     if ( !g_key_file_load_from_file(keyfile, filename, G_KEY_FILE_KEEP_COMMENTS, NULL) )
         return FALSE;
 
-    app->argv = load_key_string_list(keyfile, "items", (gsize *)&(app->argc), NULL );
-    if (!app->argv)
+    items = load_key_string_list(keyfile, "items", &size, NULL );
+    if (!items)
         return FALSE;
-    dval = load_key_double(keyfile, "zoom", 1.0);
-    set_zoom_simple(app, dval);
-    dval = load_key_double(keyfile, "sharpen", 0.0);
-    app->options.sharpen_strength = (gfloat)dval;
-    sharpen(app->viewport, app->options.sharpen_strength);
-    app->current_offset = load_key_uint(keyfile, "current", 0);
-    app->options.rows = load_key_uint(keyfile, "rows", 1);
-    app->options.columns = load_key_uint(keyfile, "columns", 1);
-    app->options.fullscreen = load_key_boolean(keyfile, "fullscreen", FALSE);
-    clutter_stage_set_fullscreen( CLUTTER_STAGE(app->stage),
-            app->options.fullscreen );
+    set_items(app, items, (guint)size);
+
+    set_zoom_simple( app,
+            load_key_double(keyfile, "zoom", 1.0) );
+    set_sharpen( app,
+            load_key_double(keyfile, "sharpen", 0.0) );
+    set_current_offset( app,
+            load_key_uint(keyfile, "current", 0) );
+    set_rows( app,
+            load_key_uint(keyfile, "rows", 1) );
+    set_columns( app,
+            load_key_uint(keyfile, "columns", 1) );
+    set_fullscreen( app,
+            load_key_boolean(keyfile, "fullscreen", FALSE) );
 
     return TRUE;
 }
@@ -924,19 +1000,19 @@ save_session(const char *filename, const Application *app)
         keyfile = g_key_file_new();
 
         g_key_file_set_string_list( keyfile, "general",
-                "items", (const gchar **)app->argv, (gsize)app->argc );
+                "items", (const gchar **)get_items(app), (gsize)get_count(app) );
         g_key_file_set_double( keyfile, "general",
                 "zoom", get_zoom(app->viewport) );
         g_key_file_set_double( keyfile, "general",
-                "sharpen", (gdouble)app->options.sharpen_strength );
+                "sharpen", (gdouble)get_sharpen(app) );
         g_key_file_set_uint64( keyfile, "general",
-                "current", (guint64)app->current_offset );
+                "current", (guint64)get_current_offset(app) );
         g_key_file_set_uint64( keyfile, "general",
-                "rows", (guint64)app->options.rows );
+                "rows", (guint64)get_rows(app) );
         g_key_file_set_uint64( keyfile, "general",
-                "columns", (guint64)app->options.columns );
+                "columns", (guint64)get_columns(app) );
         g_key_file_set_boolean( keyfile, "general",
-                "fullscreen", app->options.fullscreen );
+                "fullscreen", get_fullscreen(app) );
 
         data = g_key_file_to_data(keyfile, &size, NULL);
         if ( fwrite(data, size, 1, f) != 1 ) {
@@ -958,6 +1034,8 @@ init_app(Application *app, int argc, char **argv)
 {
     ClutterActor *box;
     ClutterLayoutManager *layout;
+
+    init_options(&app->options);
 
     app->count = 0;
     app->current_offset = 0;
@@ -1007,15 +1085,17 @@ init_app(Application *app, int argc, char **argv)
         g_printerr("imagepeek: Session file \"%s\" loaded.\n", app->session_file);
 
     /* images from arguments or session */
-    if ( argc > 1 ) {
-        app->argc = argc;
-        app->argv = argv;
-        app->current_offset = 0;
-    }
-    if (app->argc < 2)
+    if ( argc > 1 )
+        set_items( app, argv+1, argc-1 );
+    if ( get_count(app) < 1 )
         return FALSE;
 
-    set_current_offset(app, app->current_offset);
+    /* set correct rows, columns and offset value */
+    set_rows( app, get_rows(app) );
+    set_columns( app, get_columns(app) );
+
+    /* load items */
+    load_more(app);
 
     return TRUE;
 }
@@ -1025,10 +1105,9 @@ int main(int argc, char **argv)
     Application app;
     int error = 0;
 
-    /* init app */
+    /* initialization */
     if ( clutter_init(&argc, &argv) != CLUTTER_INIT_SUCCESS )
         return 1;
-    init_options(&app.options);
     if ( !init_app(&app, argc, argv) ) {
         g_printerr("imagepeek: No images loaded!\n");
         return 1;
