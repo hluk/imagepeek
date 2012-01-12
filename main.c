@@ -531,6 +531,17 @@ scrollable_on_key_press(ClutterActor *actor,
             viewport = scrollable_get_offset_parent(actor);
             y += clutter_actor_get_height(viewport) - scroll_amount;
             break;
+        case CLUTTER_KEY_Home:
+            if ( state & CLUTTER_SHIFT_MASK )
+                return FALSE;
+            y = x = 0;
+            break;
+        case CLUTTER_KEY_End:
+            if ( state & CLUTTER_SHIFT_MASK )
+                return FALSE;
+            x = clutter_actor_get_width(actor);
+            y = clutter_actor_get_height(actor);
+            break;
         case CLUTTER_KEY_space:
             viewport = scrollable_get_offset_parent(actor);
             if ( state & CLUTTER_SHIFT_MASK )
@@ -750,15 +761,14 @@ load_image(Application *app, const char *filename, gint x, gint y)
     view = g_object_new(CLUTTER_TYPE_TEXTURE, "disable-slicing", TRUE, NULL);
     clutter_texture_set_load_async( CLUTTER_TEXTURE(view), FALSE );
     clutter_texture_set_from_file( CLUTTER_TEXTURE(view), filename, &error );
-    if (view) {
-        clutter_container_add_actor( CLUTTER_CONTAINER(item), view );
+    if (error) {
+        g_printerr("imagepeek: %s\n", error->message);
+        g_error_free(error);
+        error = NULL;
+        g_object_unref(view);
+        view = NULL;
     } else {
-        /*g_printerr("imagepeek: Cannot open \"%s\"!\n", filename);*/
-        if (error) {
-            g_printerr("imagepeek: %s\n", error->message);
-            g_error_free(error);
-            error = NULL;
-        }
+        clutter_container_add_actor( CLUTTER_CONTAINER(item), view );
     }
 
     if ( get_rows(app) > 1 || get_columns(app) > 1 || !view ) {
@@ -939,8 +949,16 @@ reload(Application *app)
 static void
 load_next(Application *app)
 {
-    guint offset = get_current_offset(app) + get_rows(app) * get_columns(app);
-    if ( offset < get_count(app) ) {
+    typeInteger offset, items_on_page, count;
+
+    offset = get_current_offset(app);
+    items_on_page = get_rows(app) * get_columns(app);
+    count = get_count(app);
+
+    offset += items_on_page;
+    if ( offset < count ) {
+        if ( offset >= count )
+            offset = count - items_on_page;
         set_current_offset(app, offset);
         reload(app);
     }
@@ -949,11 +967,21 @@ load_next(Application *app)
 static void
 load_prev(Application *app)
 {
-    gint offset = get_current_offset(app) - get_rows(app) * get_columns(app);
-    if ( offset >= 0 ) {
-        set_current_offset(app, offset);
-        reload(app);
+    typeInteger offset, items_on_page;
+
+    offset = get_current_offset(app);
+    items_on_page = get_rows(app) * get_columns(app);
+
+    if ( offset >= items_on_page ) {
+        offset -= get_rows(app) * get_columns(app);
+    } else if ( offset > 0 ) {
+        offset = 0;
+    } else {
+        return;
     }
+
+    set_current_offset(app, offset);
+    reload(app);
 }
 
 static gboolean
@@ -1098,6 +1126,25 @@ on_key_press(ClutterActor *stage,
                         0 );
             } else {
                 load_next(app);
+            }
+            break;
+
+        case CLUTTER_KEY_Home:
+            if ( state & CLUTTER_SHIFT_MASK ) {
+                if ( get_current_offset(app) != 0 ) {
+                    set_current_offset(app, 0);
+                    reload(app);
+                }
+            }
+            break;
+        case CLUTTER_KEY_End:
+            if ( state & CLUTTER_SHIFT_MASK ) {
+                typeInteger offset = get_count(app) -
+                    get_rows(app) * get_columns(app);
+                if ( offset > get_current_offset(app) ) {
+                    set_current_offset(app, offset);
+                    reload(app);
+                }
             }
             break;
 
@@ -1366,8 +1413,8 @@ key_file_new(const gchar *filename)
     GError *error = NULL;
     GKeyFile *keyfile = NULL;
 
+    keyfile = g_key_file_new();
     if (filename) {
-        keyfile = g_key_file_new();
         g_key_file_load_from_file(keyfile, filename,
                 G_KEY_FILE_KEEP_COMMENTS, &error);
         if (error) {
@@ -1447,8 +1494,11 @@ save_session(const Application *app, const char *filename)
     const gchar *key;
 
     keyfile = key_file_new(filename);
-    if (!keyfile)
-        return FALSE;
+    if (!keyfile) {
+        keyfile = key_file_new(NULL);
+        if (!keyfile)
+            return FALSE;
+    }
 
     while(option->key) {
         type = option->type;
@@ -1580,11 +1630,11 @@ int main(int argc, char **argv)
     clutter_main();
 
     /* save session */
-    if (app.session_file) {
+    if (app.session_file && app.session_file[0] != '\0') {
         if ( save_session(&app, app.session_file) ) {
             g_printerr("imagepeek: Session file \"%s\" saved.\n", app.session_file);
         } else {
-            g_printerr("imagepeek: Cannot save session file!\n");
+            g_printerr("imagepeek: Cannot save session file '%s'!\n", app.session_file);
             ++error;
         }
     }
