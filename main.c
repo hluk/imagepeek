@@ -8,7 +8,7 @@ typedef struct _Option Option;
 typedef struct _Options Options;
 typedef struct _Application Application;
 
-typedef guint64 typeInteger;
+typedef gint typeInteger;
 typedef gdouble typeDouble;
 typedef gboolean typeBoolean;
 typedef const gchar *typeString;
@@ -309,25 +309,25 @@ get_count(const Application *app)
 static typeInteger
 get_columns(const Application *app)
 {
-    return CLAMP(app->options.columns, 1, get_count(app));
+    return MIN(app->options.columns, get_count(app));
 }
 
 static void
 set_columns(Application *app, typeInteger columns)
 {
-    app->options.columns = columns;
+    app->options.columns = columns > 0 ? columns : 1;
 }
 
 static typeInteger
 get_rows(const Application *app)
 {
-    return CLAMP(app->options.rows, 1, get_count(app));
+    return MIN(app->options.rows, get_count(app));
 }
 
 static void
 set_rows(Application *app, typeInteger rows)
 {
-    app->options.rows = rows;
+    app->options.rows = rows > 0 ? rows : 1;
 }
 
 static typeInteger
@@ -336,13 +336,13 @@ get_current_offset(const Application *app)
     guint offset = app->current_offset;
     guint count = get_count(app);
 
-    return offset < count ? offset : count-1;
+    return MIN(offset, count-1);
 }
 
 static void
 set_current_offset(Application *app, typeInteger offset)
 {
-    app->current_offset = offset;
+    app->current_offset = offset > 0 ? offset : 0;
 }
 
 static typeString
@@ -369,8 +369,9 @@ get_item_spacing(const Application *app)
 static void
 set_item_spacing(Application *app, typeInteger spacing)
 {
-    clutter_table_layout_set_column_spacing( CLUTTER_TABLE_LAYOUT(app->layout), spacing );
-    clutter_table_layout_set_row_spacing( CLUTTER_TABLE_LAYOUT(app->layout), spacing );
+    guint s = spacing > 0 ? spacing : 0;
+    clutter_table_layout_set_column_spacing( CLUTTER_TABLE_LAYOUT(app->layout), s );
+    clutter_table_layout_set_row_spacing( CLUTTER_TABLE_LAYOUT(app->layout), s );
 }
 
 static typeStringList
@@ -1148,6 +1149,14 @@ on_key_press(ClutterActor *stage,
             }
             break;
 
+        /* shift items on page */
+        case CLUTTER_KEY_S:
+        case CLUTTER_KEY_s:
+            set_current_offset( app, get_current_offset(app) +
+                    ((state & CLUTTER_SHIFT_MASK) ? -1 : 1) );
+            reload(app);
+            break;
+
         /* add rows/columns */
         case CLUTTER_KEY_r:
         case CLUTTER_KEY_R:
@@ -1237,7 +1246,7 @@ config_integer( Application *app,
     typeInteger value;
 
     if ( keyfile && g_key_file_has_key(keyfile, "general", key, NULL) ) {
-        value = g_key_file_get_uint64(keyfile, "general", key, error);
+        value = g_key_file_get_integer(keyfile, "general", key, error);
         if (!*error) {
             (*set)(app, value);
             return;
@@ -1506,7 +1515,7 @@ save_session(const Application *app, const char *filename)
         if (type == OptionInteger) {
             getterInteger *get = option->getter.getInteger;
             if (get)
-                g_key_file_set_uint64( keyfile, "general", key, (*get)(app) );
+                g_key_file_set_integer( keyfile, "general", key, (*get)(app) );
         } else if (type == OptionDouble) {
             getterDouble *get = option->getter.getDouble;
             if (get)

@@ -26,6 +26,7 @@ Shortcuts
 * **SHIFT + C or SHIFT + R**: decrease number of columns/rows
 * **F5**: reload
 * **Escape, Q**: exit
+* **S or SHIFT + S**: shift items on page
 
 Sessions
 --------
