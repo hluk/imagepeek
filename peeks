@@ -1,0 +1,87 @@
+#!/bin/bash
+# view files with imagepeek
+# arguments: session-name [images|directories...]
+
+# session filename prefix
+SESSION_PREFIX=${SESSION_PREFIX:-"$HOME/.imagepeek-"}
+# command to sort images in directory
+IMAGEPEEK_SORT=${IMAGEPEEK_SORT:-"sort -n"}
+
+# get option from session file
+get_option () {
+    grep '^'"$1"'=' "$IMAGEPEEK_SESSION" | sed 's/[^=]\+=//'
+}
+
+# get item count from session file
+get_count () {
+    # count semicolons in "items" options
+    # semicolon is at the end of each item (ignore escaped semicolons)
+    get_option items | grep -o '[^\\]\(\\\\\)*;' | wc -l
+}
+
+# list available sessions
+list_sessions () {
+    for s in "$SESSION_PREFIX"*; do
+        echo "`basename "$s" | sed 's/^.*\?-//'`"
+    done
+}
+
+print_help () {
+    echo "Usage: $0 session-name [images|directories...]"
+    echo "    Restore/save session-name file and view images"
+    echo "    passed as arguments or images from the session."
+}
+
+# help
+if [ "$1" == "--help" -o "$1" == "-h" ]; then
+    print_help
+    exit 0
+fi
+
+# if first argument is empty string or is not specified
+if [ -z "$1" ]; then
+    # use zenity to list available sessions
+    if which zenity >/dev/null; then
+        SESSION=`list_sessions|zenity --list --text "Select session." --column Sessions 2>/dev/null` &&
+        exec "$0" "$SESSION" "$@"
+    fi
+    # or print help
+    print_help
+    echo "Available sessions:"
+    list_sessions
+    exit 1
+fi
+
+# session filename
+IMAGEPEEK_SESSION="$SESSION_PREFIX$1"
+
+shift
+# if other images or directories passed as arguments
+if [ $# -gt 0 ]; then
+    # create new session file
+    (
+    echo -en '[general]\nitems='
+    for file in "$@"; do
+        find "$file" | $IMAGEPEEK_SORT || echo "$file"
+    done | sed 's/\\/\\\\/g;s/;/\\;/g' | tr '\n' ';'
+    ) > "$IMAGEPEEK_SESSION" || exit 1
+elif [ ! -f "$IMAGEPEEK_SESSION" ]; then
+    print_help
+    echo "Available sessions:"
+    list_sessions
+    exit 1
+fi
+
+# run imagepeek
+imagepeek || exit 1
+
+if [ -r "$IMAGEPEEK_SESSION" ]; then
+    # remove if last item viewed
+    current=`get_option current` &&
+    rows=`get_option rows` &&
+    columns=`get_option columns` &&
+    [ "`get_count`" -eq "$((rows*columns+current))" ] && rm -vf "$IMAGEPEEK_SESSION"
+fi
+
+exit 0
+
