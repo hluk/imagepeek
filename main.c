@@ -41,6 +41,7 @@ struct _Options {
     guint scroll_animation;
     guint rows, columns;
     gboolean fullscreen;
+    ClutterTextureQuality zoom_quality;
 };
 
 struct _Application {
@@ -107,28 +108,30 @@ typedef void (*zoom_callback)(ClutterAnimation *, gpointer);
 static gboolean init_app(Application *app, int argc, char **argv);
 
 /* Application setters */
-static void set_sharpen(Application *app, typeDouble sharpen_strength);
-static void set_fullscreen(Application *app, typeBoolean fullscreen);
-static void set_items(Application *app, typeStringList items, gsize count);
-static void set_current_offset(Application *app, typeInteger offset);
-static void set_item_font(Application *app, typeString font_name);
-static void set_rows(Application *app, typeInteger rows);
-static void set_columns(Application *app, typeInteger columns);
-static void set_zoom_simple(Application *app, typeDouble zoom_level);
-static void set_item_spacing(Application *app, typeInteger spacing);
+static setterDouble     set_sharpen;
+static setterBoolean    set_fullscreen;
+static setterStringList set_items;
+static setterInteger    set_current_offset;
+static setterString     set_item_font;
+static setterInteger    set_rows;
+static setterInteger    set_columns;
+static setterDouble     set_zoom_simple;
+static setterInteger    set_zoom_quality;
+static setterInteger    set_item_spacing;
 
 /* Application getters */
-static typeDouble get_sharpen(const Application *app);
-static typeBoolean get_fullscreen(const Application *app);
-static typeString get_item(const Application *app, guint index);
-static typeStringList get_items(const Application *app, gsize *size);
-static typeInteger get_current_offset(const Application *app);
-static typeString get_item_font(const Application *app);
-static typeInteger get_rows(const Application *app);
-static typeInteger get_columns(const Application *app);
-static typeInteger get_count(const Application *app);
-static typeDouble get_zoom_simple(const Application *app);
-static typeInteger get_item_spacing(const Application *app);
+static getterDouble     get_sharpen;
+static getterBoolean    get_fullscreen;
+static getterStringList get_items;
+static getterInteger    get_current_offset;
+static getterString     get_item_font;
+static getterInteger    get_rows;
+static getterInteger    get_columns;
+static getterInteger    get_count;
+static getterDouble     get_zoom_simple;
+static getterInteger    get_zoom_quality;
+static getterInteger    get_item_spacing;
+static typeString       get_item(const Application *app, guint index);
 
 /* session */
 static gboolean save_session(const Application *app, const char *filename);
@@ -291,6 +294,7 @@ static const Option options[] = {
     OPTION("item_spacing",      Integer,    item_spacing,      4)
     OPTION("zoom_increment",    Double,     zoom_increment,    0.125)
     OPTION("zoom_animation",    Integer,    zoom_animation,    100)
+    OPTION("zoom_quality",      Integer,    zoom_quality,      1)
     OPTION("scroll_animation",  Integer,    scroll_animation,  100)
     {NULL}
 };
@@ -496,7 +500,7 @@ scrollable_on_key_press(ClutterActor *actor,
         ClutterEvent *event,
         guint *scroll_animation)
 {
-    gfloat x, y, x1, y1, x2, y2;
+    gfloat x, y, x1, y1;
     ClutterActor *viewport = NULL;
     guint keyval;
     ClutterModifierType state;
@@ -554,16 +558,13 @@ scrollable_on_key_press(ClutterActor *actor,
             return FALSE;
     }
 
-    scrollable_set_scroll(actor, x, y, 0);
-    scrollable_get_scroll(actor, &x2, &y2);
-    if ( (gint)x1 != (gint)x2 || (gint)y1 != (gint)y2 ) {
-        scrollable_set_scroll(actor, x, y, 0);
+    if ( (gint)x1 != (gint)x || (gint)y1 != (gint)y ) {
         scrollable_set_scroll(actor, x, y, *scroll_animation);
-    } else {
-        return FALSE;
+        scrollable_get_scroll(actor, &x, &y);
+        return ( (gint)x1 != (gint)x || (gint)y1 != (gint)y );
     }
 
-    return TRUE;
+    return FALSE;
 }
 
 static gboolean
@@ -744,6 +745,31 @@ set_zoom_simple(Application *app, typeDouble zoom_level)
             G_CALLBACK(on_zoom_completed), app);
 }
 
+static typeInteger
+get_zoom_quality(const Application *app)
+{
+    switch( app->options.zoom_quality ) {
+        case CLUTTER_TEXTURE_QUALITY_LOW:
+            return 0;
+        case CLUTTER_TEXTURE_QUALITY_MEDIUM:
+            return 1;
+        case CLUTTER_TEXTURE_QUALITY_HIGH:
+            return 2;
+        default:
+            return 1;
+    }
+}
+
+static void
+set_zoom_quality(Application *app, typeInteger quality)
+{
+    if (quality <= 0)
+        app->options.zoom_quality = CLUTTER_TEXTURE_QUALITY_LOW;
+    else if (quality == 1)
+        app->options.zoom_quality = CLUTTER_TEXTURE_QUALITY_MEDIUM;
+    else
+        app->options.zoom_quality = CLUTTER_TEXTURE_QUALITY_HIGH;
+}
 
 static gboolean
 load_image(Application *app, const char *filename, gint x, gint y)
@@ -760,6 +786,7 @@ load_image(Application *app, const char *filename, gint x, gint y)
      * -- workaround is to disable slicing */
     /*view = clutter_texture_new();*/
     view = g_object_new(CLUTTER_TYPE_TEXTURE, "disable-slicing", TRUE, NULL);
+    clutter_texture_set_filter_quality( CLUTTER_TEXTURE(view), app->options.zoom_quality );
     clutter_texture_set_load_async( CLUTTER_TEXTURE(view), FALSE );
     clutter_texture_set_from_file( CLUTTER_TEXTURE(view), filename, &error );
     if (error) {
@@ -905,6 +932,7 @@ load_more(Application *app)
     guint r1, c1, r2, c2;
     GString *title;
     gchar* title2;
+    typeInteger count, current;
 
     if (app->loading) {
         app->restart = TRUE;
@@ -927,8 +955,11 @@ load_more(Application *app)
             clean_items(app);
 
             /* set window title */
-            title = g_string_new( get_item(app, get_current_offset(app)) );
-            g_string_append(title, " - imagepeek");
+            count = get_count(app);
+            current = get_current_offset(app);
+            title = g_string_new("");
+            g_string_printf(title, "[%d/%d] %s - imagepeek",
+                    (int)current+1, (int)count, get_item(app, current) );
             title2 = g_string_free(title, FALSE);
             clutter_stage_set_title( CLUTTER_STAGE(app->stage), title2 );
             g_free(title2);
