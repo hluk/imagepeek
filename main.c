@@ -451,37 +451,42 @@ scrollable_get_offset_parent(ClutterActor *actor)
 }
 
 static void
-scrollable_get_scroll(ClutterActor *actor, gfloat *x, gfloat *y)
+scrollable_get_max(ClutterActor *actor, gfloat *max_x, gfloat *max_y)
 {
     ClutterActor *parent;
-    gfloat max_x, max_y, zz;
+    gfloat pw, ph, w, h, zz;
     gdouble z;
 
-    clutter_actor_get_anchor_point(actor, x, y);
     parent = scrollable_get_offset_parent(actor);
+    clutter_actor_get_size(parent, &pw, &ph);
+    clutter_actor_get_size(actor, &w, &h);
     clutter_actor_get_scale(actor, &z, NULL);
     zz = (gfloat)z;
-    max_x = clutter_actor_get_width(actor) - clutter_actor_get_width(parent)/zz;
-    max_y = clutter_actor_get_height(actor) - clutter_actor_get_height(parent)/zz;
+    if (max_x)
+        *max_x = MAX(0.0, w - pw/zz);
+    if (max_y)
+        *max_y = MAX(0.0, h - ph/zz);
+}
+
+static void
+scrollable_get_scroll(ClutterActor *actor, gfloat *x, gfloat *y)
+{
+    gfloat max_x, max_y;
+
+    clutter_actor_get_anchor_point(actor, x, y);
+    scrollable_get_max(actor, &max_x, &max_y);
     if (x)
-        *x += max_x/2;
+        *x = MAX(0.0, *x+max_x/2);
     if (y)
-        *y += max_y/2;
+        *y = MAX(0.0, *y+max_y/2);
 }
 
 static void
 scrollable_set_scroll(ClutterActor *actor, gfloat x, gfloat y, guint scroll_animation)
 {
-    ClutterActor *parent;
-    gfloat max_x, max_y, xx, yy, zz, w, h;
-    gdouble z;
+    gfloat max_x, max_y, xx, yy;
 
-    parent = scrollable_get_offset_parent(actor);
-    clutter_actor_get_size(parent, &w, &h);
-    clutter_actor_get_scale(actor, &z, NULL);
-    zz = (gfloat)z;
-    max_x = clutter_actor_get_width(actor) - w/zz;
-    max_y = clutter_actor_get_height(actor) - h/zz;
+    scrollable_get_max(actor, &max_x, &max_y);
     xx = max_x <= 0.0 ? 0.0 : ( CLAMP(x, 0.0, max_x) - max_x/2 );
     yy = max_y <= 0.0 ? 0.0 : ( CLAMP(y, 0.0, max_y) - max_y/2 );
 
@@ -500,7 +505,7 @@ scrollable_on_key_press(ClutterActor *actor,
         ClutterEvent *event,
         guint *scroll_animation)
 {
-    gfloat x, y, x1, y1;
+    gfloat x, y, x1, y1, max_x, max_y;
     ClutterActor *viewport = NULL;
     guint keyval;
     ClutterModifierType state;
@@ -514,6 +519,7 @@ scrollable_on_key_press(ClutterActor *actor,
     scrollable_get_scroll(actor, &x1, &y1);
     x = x1;
     y = y1;
+    scrollable_get_max(actor, &max_x, &max_y);
     switch (keyval)
     {
         case CLUTTER_KEY_Up:
@@ -544,8 +550,8 @@ scrollable_on_key_press(ClutterActor *actor,
         case CLUTTER_KEY_End:
             if ( state & CLUTTER_SHIFT_MASK )
                 return FALSE;
-            x = clutter_actor_get_width(actor);
-            y = clutter_actor_get_height(actor);
+            x = max_x;
+            y = max_y;
             break;
         case CLUTTER_KEY_space:
             viewport = scrollable_get_offset_parent(actor);
@@ -558,10 +564,12 @@ scrollable_on_key_press(ClutterActor *actor,
             return FALSE;
     }
 
+    x = CLAMP(x, 0.0, max_x);
+    y = CLAMP(y, 0.0, max_y);
+
     if ( (gint)x1 != (gint)x || (gint)y1 != (gint)y ) {
         scrollable_set_scroll(actor, x, y, *scroll_animation);
-        scrollable_get_scroll(actor, &x, &y);
-        return ( (gint)x1 != (gint)x || (gint)y1 != (gint)y );
+        return TRUE;
     }
 
     return FALSE;
