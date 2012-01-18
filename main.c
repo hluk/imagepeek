@@ -787,7 +787,8 @@ load_image(Application *app, const char *filename, gint x, gint y)
     gfloat xx, yy, w;
     GError *error = NULL;
 
-    item = clutter_group_new();
+    layout = CLUTTER_TABLE_LAYOUT( clutter_table_layout_new() );
+    item = clutter_box_new( CLUTTER_LAYOUT_MANAGER(layout) );
 
     /* image */
     /* FIXME: SIGBUS when image is larger than 4094
@@ -805,6 +806,8 @@ load_image(Application *app, const char *filename, gint x, gint y)
         view = NULL;
     } else {
         clutter_container_add_actor( CLUTTER_CONTAINER(item), view );
+        clutter_table_layout_set_fill( layout, view, FALSE, FALSE );
+        clutter_table_layout_set_expand( layout, view, FALSE, FALSE );
     }
 
     if ( get_rows(app) > 1 || get_columns(app) > 1 || !view ) {
@@ -824,13 +827,13 @@ load_image(Application *app, const char *filename, gint x, gint y)
         clutter_container_add_actor( CLUTTER_CONTAINER(label), text_shadow_color );
         clutter_container_add_actor( CLUTTER_CONTAINER(label), text );
 
-        if (view) {
-            w = clutter_actor_get_width(view);
-            clutter_actor_set_width(text_shadow_color, w);
-            clutter_actor_set_width(text, w);
-        } else {
+        clutter_actor_set_width(label, 0.0);
+        clutter_actor_add_constraint( text, clutter_bind_constraint_new(item, CLUTTER_BIND_WIDTH, 0.0) );
+        clutter_actor_add_constraint( text_shadow_color, clutter_bind_constraint_new(text, CLUTTER_BIND_WIDTH, 4.0) );
+
+        if (!view)
             clutter_text_set_color( CLUTTER_TEXT(text), &app->options.error_color );
-        }
+
         clutter_container_add_actor( CLUTTER_CONTAINER(item), label );
     }
 
@@ -845,10 +848,6 @@ load_image(Application *app, const char *filename, gint x, gint y)
 
     /* add item and label */
     clutter_table_layout_pack(layout, item, x, y);
-    if (view) {
-        clutter_table_layout_set_fill( layout, view, FALSE, FALSE );
-        clutter_table_layout_set_expand( layout, view, FALSE, FALSE );
-    }
 
     /* restore scroll */
     w = (clutter_actor_get_width(app->viewport)-w)/2;
