@@ -10,9 +10,9 @@ Browse images passed as command line arguments.
 Shortcuts
 ---------
 
-* **Arrow keys, Page Up, Page Down, Spacebar**: basic navigation
-* **N, J, Enter**: next item
-* **P, K, SHIFT + N**: previous item
+* **Arrow keys, Page Up, Page Down, Spacebar, J, K**: basic navigation
+* **N, Enter**: next item
+* **P, SHIFT + N**: previous item
 * **SHIFT + Home or SHIFT + End**: first or last item
 * **\+ or -**: zoom in or out
 * **number key**: set zoom level (keypad 2 is 2x zoom)

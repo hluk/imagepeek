@@ -1,4 +1,5 @@
-CFLAGS = -Wall -O0 -g
+CC = clang
+#CFLAGS += -Wall -O0 -g
 
 PKG_CONFIG = pkg-config
 PKGS = clutter-1.0
@@ -11,7 +12,17 @@ LFLAGS += $(shell $(PKG_CONFIG) --libs $(PKGS))
 all: $(OUT)
 
 $(OUT): main.c
-		gcc $(CFLAGS) $(LFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) $(LFLAGS) -o $@ $<
+
+%.pch: %
+	$(CC) -emit-pch $(CFLAGS) -o $@ $<
+
+.PHONY:
+analyze: main.c
+	@echo '=== running cppcheck ==='
+	cppcheck --enable=all --force --inline-suppr $(shell echo $(CFLAGS)|grep -o -- '-[DIU]\s*\S\+') -q $<
+	@echo '=== running clang-analyzer ==='
+	scan-build -v -V make clean all
 
 .PHONY:
 clean:
