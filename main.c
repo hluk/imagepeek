@@ -1376,7 +1376,6 @@ init_app(Application *app, int argc, char **argv)
     app->options.item_font = NULL;
 
     app->stage = clutter_stage_get_default();
-    clutter_stage_set_color( CLUTTER_STAGE(app->stage), &app->options.background_color );
 
     /*layout = clutter_box_layout_new();*/
     layout = clutter_bin_layout_new(CLUTTER_BIN_ALIGNMENT_FIXED, CLUTTER_BIN_ALIGNMENT_FIXED);
@@ -1397,13 +1396,6 @@ init_app(Application *app, int argc, char **argv)
             "scale-gravity", CLUTTER_GRAVITY_CENTER,
             NULL );
 
-    /* interaction */
-    init_scrollable(app->viewport, &app->options.scroll_animation);
-    g_signal_connect( app->stage,
-            "key-press-event",
-            G_CALLBACK(on_key_press),
-            app );
-
     clutter_stage_set_key_focus( CLUTTER_STAGE(app->stage), app->viewport );
     clutter_actor_show_all(app->stage);
     clutter_stage_set_user_resizable( CLUTTER_STAGE(app->stage), TRUE );
@@ -1423,6 +1415,16 @@ init_app(Application *app, int argc, char **argv)
     /* set correct rows, columns and offset value */
     set_rows( app, get_rows(app) );
     set_columns( app, get_columns(app) );
+
+    /* background color */
+    clutter_stage_set_color( CLUTTER_STAGE(app->stage), &app->options.background_color );
+
+    /* interaction */
+    init_scrollable(app->viewport, &app->options.scroll_animation);
+    g_signal_connect( app->stage,
+            "key-press-event",
+            G_CALLBACK(on_key_press),
+            app );
 
     /* load items */
     load_more(app);
