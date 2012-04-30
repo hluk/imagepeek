@@ -47,6 +47,8 @@ PROPERTY(scroll_animation, typeInteger)
 #define COLOR(r,g,b,a) ((ClutterColor){r,g,b,a})
 
 static const Option options[] = {
+    OPTION("zoom_animation",    Integer,    zoom_animation,    100)
+    OPTION("scroll_animation",  Integer,    scroll_animation,  100)
     OPTION("zoom",              Double,     zoom_simple,       1.0)
     OPTION("sharpen",           Double,     sharpen,           0.0)
     OPTION("current",           Integer,    current_offset,    0)
@@ -61,9 +63,7 @@ static const Option options[] = {
     OPTION("item_font",         String,     item_font,         "sans bold 16px")
     OPTION("item_spacing",      Integer,    item_spacing,      4)
     OPTION("zoom_increment",    Double,     zoom_increment,    0.125)
-    OPTION("zoom_animation",    Integer,    zoom_animation,    100)
     OPTION("zoom_quality",      Integer,    zoom_quality,      1)
-    OPTION("scroll_animation",  Integer,    scroll_animation,  100)
     {NULL}
 };
 
@@ -608,9 +608,6 @@ load_image(Application *app, const char *filename, gint x, gint y)
         clutter_container_add_actor( CLUTTER_CONTAINER(item), label );
     }
 
-    /* begin updating layout */
-    clutter_threads_enter();
-
     layout = CLUTTER_TABLE_LAYOUT(app->layout);
 
     /* save scroll */
@@ -623,8 +620,6 @@ load_image(Application *app, const char *filename, gint x, gint y)
     /* restore scroll */
     w = (clutter_actor_get_width(app->viewport)-w)/2;
     scrollable_set_scroll(app->viewport, xx+w, yy, 0);
-
-    clutter_threads_leave();
 
     return view != NULL;
 }
@@ -666,7 +661,6 @@ load_images(Application *app)
 {
     guint i, x, y, count;
 
-    clutter_threads_enter();
     count = app->count;
     i = get_current_offset(app) + count;
     x = count % get_columns(app);
@@ -676,28 +670,21 @@ load_images(Application *app)
         app->restart = FALSE;
         clean_items(app);
     }
-    clutter_threads_leave();
 
     if( i >= get_count(app) ) {
-        clutter_threads_enter();
         app->loading = FALSE;
-        clutter_threads_leave();
         return FALSE;
     }
 
     if (x == 0) {
         ++y;
         if (y >= get_rows(app) ) {
-            clutter_threads_enter();
             app->loading = FALSE;
-            clutter_threads_leave();
             return FALSE;
         }
     }
 
-    clutter_threads_enter();
     ++app->count;
-    clutter_threads_leave();
     load_image( app, get_item(app, i), x, y );
     return TRUE;
 }
